@@ -136,3 +136,10 @@ Query vector 9:
     4: key=360034 score=37.783092 (from shard 0)
     5: key=2973990 score=37.515247 (from shard 2)
 ```
+
+
+```
+-rw-r--r--  1 dangoodman  staff   508M Sep 24 17:44 shard_2.faiss
+-rw-r--r--  1 dangoodman  staff   508M Sep 24 17:43 shard_1.faiss
+-rw-r--r--  1 dangoodman  staff   508M Sep 24 17:42 shard_0.faiss
+```
