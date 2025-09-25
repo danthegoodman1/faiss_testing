@@ -11,16 +11,17 @@ import numpy as np
 
 DIMS = 128
 SHARDS = 3
-VECTORS_PER_SHARD = 3333
+VECTORS_PER_SHARD = 1_000_000
 TEST_VECTORS_COUNT = 10
 TOP_K = 5
 CANDIDATES_PER_SHARD = 20
+NLIST = 10000  # Number of clusters for IVF
 
 DATA_ROOT = Path(__file__).resolve().parent
 
 
 def shard_id_range(shard_id: int) -> tuple[int, int]:
-    """Return (start_id, end_id) for a shard's global ID range (end_id exclusive)."""
+    """Return (start_id, end_i`d) for a shard's global ID range (end_id exclusive)."""
     start = shard_id * VECTORS_PER_SHARD
     end = start + VECTORS_PER_SHARD
     return start, end
@@ -53,20 +54,23 @@ def generate_random_vectors(count: int, dims: int, seed: int) -> np.ndarray:
 
 
 def build_shards() -> None:
-    print(f"Building {SHARDS} shards with {VECTORS_PER_SHARD} vectors each...")
+    print(f"Building {SHARDS} shards with {VECTORS_PER_SHARD} vectors each NLIST={NLIST}...")
 
     total_start = time.perf_counter()
 
     for shard_id in range(SHARDS):
         shard_start = time.perf_counter()
 
-        # Use IndexFlatIP directly - it supports both add and reconstruct
-        index = faiss.IndexFlatIP(DIMS)
+        # Use IndexIVFFlat - clustering without lossy quantization
+        quantizer = faiss.IndexFlatIP(DIMS)
+        index = faiss.IndexIVFFlat(quantizer, DIMS, NLIST, faiss.METRIC_INNER_PRODUCT)
         shard_vectors = generate_random_vectors(
             VECTORS_PER_SHARD, DIMS, shard_id * 1000
         )
 
-        # Add vectors sequentially - we'll map custom IDs to sequential IDs ourselves
+        # Train the index first, then add vectors
+        index.train(shard_vectors)
+        index.make_direct_map()  # Enable direct map for reconstruct() support
         index.add(shard_vectors)
 
         index_path = shard_index_path(shard_id)
@@ -107,6 +111,7 @@ def distributed_search_with_reranking() -> None:
     for shard_id in range(SHARDS):
         shard_start = time.perf_counter()
         index = faiss.read_index(str(shard_index_path(shard_id)), faiss.IO_FLAG_MMAP)
+        index.nprobe = 10  # Search more clusters for better recall
         shard_elapsed = time.perf_counter() - shard_start
         shard_indexes.append(index)
         print(
@@ -157,6 +162,7 @@ def distributed_search_with_reranking() -> None:
             rerank_ids.append(global_key)
 
         rerank_matrix = np.stack(rerank_vectors).astype(np.float32)
+        # Use flat index for exact reranking (not IVF since we want precision here)
         base_rerank_index = faiss.IndexFlatIP(DIMS)
         rerank_index = faiss.IndexIDMap(
             base_rerank_index
